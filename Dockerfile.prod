@@ -31,7 +31,7 @@ COPY --from=composerbuild /app/vendor ./vendor
 COPY --from=bunbuild     /app/public/build ./public/build
 
 # Caddyfile do Franken
-COPY docker/Caddyfile /etc/frankenphp/Caddyfile
+COPY infra/Caddyfile /etc/frankenphp/Caddyfile
 
 # Env padrão (override no Dokploy)
 ENV APP_ENV=production \
