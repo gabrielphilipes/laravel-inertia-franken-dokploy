@@ -1,54 +1,33 @@
-# --- Stage 1: build de assets (Bun) ---
+# --- Stage 1: Composer (vendor primeiro) ---
+FROM php:8.3-cli-alpine AS composerbuild
+WORKDIR /app
+RUN apk add --no-cache git unzip libzip-dev icu-dev \
+ && docker-php-ext-install intl zip
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+ENV COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_LIMIT=-1
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --prefer-dist --no-interaction --no-progress --no-plugins --no-scripts
+COPY . .   # para artisan ler config se você futuramente gerar algo (ex: ziggy:generate)
+
+# --- Stage 2: Bun (assets) ---
 FROM oven/bun:1 AS bunbuild
 WORKDIR /app
 COPY package*.json bun.lockb* ./
 RUN bun install --frozen-lockfile || bun install
 COPY resources ./resources
 COPY vite.config.* ./
+# Se algum import ainda tocar vendor (não deveria), teremos:
+COPY --from=composerbuild /app/vendor ./vendor
 RUN bun run build
-
-# --- Stage 2: Composer com deps que o Composer precisa ---
-# Usamos php:cli + zip/git para evitar falhas de prefer-dist/unzip
-FROM php:8.3-cli-alpine AS composerbuild
-WORKDIR /app
-
-# Ferramentas e extensões para o Composer funcionar bem
-RUN apk add --no-cache git unzip libzip-dev \
- && docker-php-ext-install zip
-
-# Copia o binário do composer da imagem oficial
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
-ENV COMPOSER_ALLOW_SUPERUSER=1 \
-    COMPOSER_MEMORY_LIMIT=-1
-
-# Se você usa pacotes privados (GitHub/Token), passe COMPOSER_AUTH como secret/arg no Dokploy
-# Exemplo (no Dokploy Build Args/Secrets):
-# COMPOSER_AUTH={"github-oauth":{"github.com":"<TOKEN>"}}
-
-COPY composer.json composer.lock ./
-# Se der erro de plataforma (extensões), você pode diagnosticar removendo --no-plugins/--no-scripts.
-RUN composer install --no-dev --prefer-dist --no-interaction --no-progress --no-plugins --no-scripts
 
 # --- Stage 3: Runtime (FrankenPHP) ---
 FROM dunglas/frankenphp:latest-php8.3
 WORKDIR /app
-
-# PHP ini prod
 RUN cp $PHP_INI_DIR/php.ini-production $PHP_INI_DIR/php.ini
-
-# Extensões necessárias em runtime (ajuste conforme seu app)
 RUN install-php-extensions pdo_pgsql pdo_mysql intl zip opcache redis
-
-# App code
 COPY . .
-# Vendor e assets
 COPY --from=composerbuild /app/vendor ./vendor
 COPY --from=bunbuild     /app/public/build ./public/build
-
-# Caddyfile
 COPY infra/Caddyfile /etc/frankenphp/Caddyfile
-
-ENV APP_ENV=production \
-    APP_DEBUG=false
-
+ENV APP_ENV=production APP_DEBUG=false
 EXPOSE 80
