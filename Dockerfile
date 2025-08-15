@@ -16,9 +16,15 @@ FROM node:20-alpine AS assets
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --no-audit --no-fund
+
+# Copiar recursos do frontend
 COPY resources/ resources/
 COPY vite.config.* ./
-# Se usar Inertia, isso já cobre o build do frontend
+
+# Copiar arquivo ziggy.js se existir (gerado localmente)
+COPY resources/js/ziggy.js resources/js/ziggy.js 2>/dev/null || true
+
+# Build do frontend
 RUN npm run build
 
 # ---------- Stage 3: App final (nginx + php-fpm) ----------
@@ -38,6 +44,9 @@ COPY --from=php-base /app/vendor/ /app/vendor/
 COPY . /app
 # Copia assets compilados
 COPY --from=assets /app/public/build /app/public/build
+
+# Gerar configuração do Ziggy
+RUN php artisan ziggy:generate || true
 
 # Otimizações do Laravel
 RUN php artisan config:cache || true \
