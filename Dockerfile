@@ -46,8 +46,8 @@ RUN php artisan config:cache || true \
 
 # Nginx config básico para Laravel
 RUN mkdir -p /run/nginx /var/log/supervisor
-COPY .docker/nginx.conf /etc/nginx/nginx.conf
-COPY .docker/supervisord.conf /etc/supervisord.conf
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY supervisord.conf /etc/supervisord.conf
 
 # Permissões
 RUN adduser -D -H -u 1000 www \
