@@ -30,7 +30,7 @@ COPY --from=composerbuild /app/vendor ./vendor
 COPY --from=nodebuild    /app/public/build ./public/build
 
 # Caddyfile (prod)
-COPY docker/Caddyfile /etc/frankenphp/Caddyfile
+COPY infra/Caddyfile /etc/frankenphp/Caddyfile
 
 ENV APP_ENV=production \
     APP_DEBUG=false
