@@ -1,38 +1,58 @@
-# --- Node build (assets Vite) ---
-FROM node:20-alpine AS nodebuild
-WORKDIR /app
-COPY package*.json vite.config.* ./
-RUN npm ci
-COPY resources ./resources
-RUN npm run build
+# ---------- Stage 1: Composer ----------
+FROM php:8.3-fpm-alpine AS php-base
+RUN apk add --no-cache bash shadow fcgi
+# Extensões comuns do Laravel (ajuste conforme seu banco)
+RUN apk add --no-cache $PHPIZE_DEPS libzip-dev zip icu-dev oniguruma-dev libpng-dev libjpeg-turbo-dev libwebp-dev freetype-dev \
+ && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
+ && docker-php-ext-install -j$(nproc) gd intl mbstring pdo pdo_mysql opcache
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# --- Composer (deps PHP) ---
-FROM composer:2 AS composerbuild
 WORKDIR /app
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --prefer-dist --no-interaction --no-progress
+RUN composer install --no-dev --prefer-dist --no-interaction --no-scripts
 
-# --- FrankenPHP runtime ---
-FROM dunglas/frankenphp:latest-php8.3
+# ---------- Stage 2: Node/Vite ----------
+FROM node:20-alpine AS assets
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+COPY resources/ resources/
+COPY vite.config.* ./
+# Se usar Inertia, isso já cobre o build do frontend
+RUN npm run build
+
+# ---------- Stage 3: App final (nginx + php-fpm) ----------
+FROM php:8.3-fpm-alpine AS runtime
+# Nginx + supervisord
+RUN apk add --no-cache nginx supervisor bash fcgi
 WORKDIR /app
 
-# PHP config (produção)
-RUN cp $PHP_INI_DIR/php.ini-production $PHP_INI_DIR/php.ini
-
-# Extensões que ajudam no dia a dia
-RUN install-php-extensions \
-    pdo_pgsql pdo_mysql intl zip opcache redis
+# Copia dependências PHP
+COPY --from=php-base /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+COPY --from=php-base /usr/local/bin/ /usr/local/bin/
+COPY --from=php-base /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
+COPY --from=php-base /usr/local/etc/php/ /usr/local/etc/php/
+COPY --from=php-base /app/vendor/ /app/vendor/
 
 # Copia app
-COPY . .
-# Vendor e assets prontos p/ produção
-COPY --from=composerbuild /app/vendor ./vendor
-COPY --from=nodebuild    /app/public/build ./public/build
+COPY . /app
+# Copia assets compilados
+COPY --from=assets /app/public/build /app/public/build
 
-# Caddyfile (prod)
-COPY infra/Caddyfile /etc/frankenphp/Caddyfile
+# Otimizações do Laravel
+RUN php artisan config:cache || true \
+ && php artisan route:cache || true \
+ && php artisan view:cache || true
 
-ENV APP_ENV=production \
-    APP_DEBUG=false
+# Nginx config básico para Laravel
+RUN mkdir -p /run/nginx /var/log/supervisor
+COPY .docker/nginx.conf /etc/nginx/nginx.conf
+COPY .docker/supervisord.conf /etc/supervisord.conf
 
-# FrankenPHP escuta :80 por padrão; Dokploy/Traefik vai rotear pra cá
+# Permissões
+RUN adduser -D -H -u 1000 www \
+ && chown -R www:www /app /var/lib/nginx /var/log/nginx
+USER www
+
+EXPOSE 80
+CMD ["/usr/bin/supervisord","-c","/etc/supervisord.conf"]
