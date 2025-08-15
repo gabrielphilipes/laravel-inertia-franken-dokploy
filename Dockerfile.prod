@@ -1,0 +1,43 @@
+# --- Stage 1: build dos assets (Bun) ---
+FROM oven/bun:1 AS bunbuild
+WORKDIR /app
+COPY package*.json bun.lockb* ./
+RUN bun install --frozen-lockfile || bun install
+COPY resources ./resources
+COPY vite.config.* ./
+# Gera public/build (Vite)
+RUN bun run build
+
+# --- Stage 2: vendor PHP ---
+FROM composer:2 AS composerbuild
+WORKDIR /app
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --prefer-dist --no-interaction --no-progress
+
+# --- Stage 3: runtime (FrankenPHP) ---
+FROM dunglas/frankenphp:latest-php8.3
+WORKDIR /app
+
+# PHP ini de produção
+RUN cp $PHP_INI_DIR/php.ini-production $PHP_INI_DIR/php.ini
+
+# Extensões úteis
+RUN install-php-extensions pdo_pgsql pdo_mysql intl zip opcache redis
+
+# Copia app
+COPY . .
+# Copia vendor e assets prontos
+COPY --from=composerbuild /app/vendor ./vendor
+COPY --from=bunbuild     /app/public/build ./public/build
+
+# Caddyfile do Franken
+COPY docker/Caddyfile /etc/frankenphp/Caddyfile
+
+# Env padrão (override no Dokploy)
+ENV APP_ENV=production \
+    APP_DEBUG=false
+
+# Exponha HTTP (FrankenPHP já escuta :80)
+EXPOSE 80
+
+# Dica: crie endpoint de healthz no seu app para healthcheck

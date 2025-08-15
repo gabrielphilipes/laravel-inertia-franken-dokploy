@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  app:
+    image: dunglas/frankenphp:latest-php8.3
+    working_dir: /app
+    ports:
+      - "${APP_PORT:-8080}:80"
+    env_file:
+      - ../.env
+    environment:
+      SERVER_NAME: ":80"
+    volumes:
+      - ..:/app
+      - ./Caddyfile:/etc/frankenphp/Caddyfile:ro
+
+  vite:
+    image: oven/bun:latest
+    working_dir: /app
+    command: sh -c "bun install && bun run dev --host --port ${VITE_PORT:-5173}"
+    ports:
+      - "${VITE_PORT:-5173}:${VITE_PORT:-5173}"
+    env_file:
+      - ../.env
+    volumes:
+      - ..:/app
+
+  artisan:
+    image: dunglas/frankenphp:latest-php8.3
+    working_dir: /app
+    entrypoint: ["php", "artisan"]
+    env_file:
+      - ../.env
+    volumes:
+      - ..:/app
+
+  composer:
+    image: composer:2
+    working_dir: /app
+    volumes:
+      - ..:/app
