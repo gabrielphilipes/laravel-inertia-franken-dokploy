@@ -1,33 +1,53 @@
 # --- Stage 1: Composer (vendor primeiro) ---
 FROM php:8.3-cli-alpine AS composerbuild
 WORKDIR /app
+
+# Ferramentas necessárias pro Composer
 RUN apk add --no-cache git unzip libzip-dev icu-dev \
  && docker-php-ext-install intl zip
+
+# Composer bin
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 ENV COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_LIMIT=-1
+
+# Instala vendor (sem scripts/plugins no build)
 COPY composer.json composer.lock ./
 RUN composer install --no-dev --prefer-dist --no-interaction --no-progress --no-plugins --no-scripts
-COPY . .   # para artisan ler config se você futuramente gerar algo (ex: ziggy:generate)
 
 # --- Stage 2: Bun (assets) ---
 FROM oven/bun:1 AS bunbuild
 WORKDIR /app
+
+# Deps do front
 COPY package*.json bun.lockb* ./
 RUN bun install --frozen-lockfile || bun install
+
+# Código necessário pro build do Vite
 COPY resources ./resources
 COPY vite.config.* ./
-# Se algum import ainda tocar vendor (não deveria), teremos:
-COPY --from=composerbuild /app/vendor ./vendor
+# (opcional) se usar Tailwind/PostCSS, copie também:
+# COPY tailwind.config.* postcss.config.* ./
+
+# Builda assets (agora sem depender de vendor)
 RUN bun run build
 
 # --- Stage 3: Runtime (FrankenPHP) ---
 FROM dunglas/frankenphp:latest-php8.3
 WORKDIR /app
+
+# PHP ini prod e extensões
 RUN cp $PHP_INI_DIR/php.ini-production $PHP_INI_DIR/php.ini
 RUN install-php-extensions pdo_pgsql pdo_mysql intl zip opcache redis
+
+# App code
 COPY . .
+
+# Vendor e assets prontos
 COPY --from=composerbuild /app/vendor ./vendor
 COPY --from=bunbuild     /app/public/build ./public/build
+
+# Caddyfile do FrankenPHP
 COPY infra/Caddyfile /etc/frankenphp/Caddyfile
+
 ENV APP_ENV=production APP_DEBUG=false
 EXPOSE 80
